@@ -1,10 +1,21 @@
 import path from 'path'
 import { IChildProcessMessage, IReactFlowNode, IReactFlowObject, IRunChatflowMessageValue, INodeData } from './Interface'
-import { buildLangchain, constructGraphs, getEndingNode, getStartingNodes, getUserHome, resolveVariables } from './utils'
+import {
+    buildLangchain,
+    checkMemorySessionId,
+    constructGraphs,
+    getEndingNode,
+    getStartingNodes,
+    getUserHome,
+    replaceInputsWithConfig,
+    resolveVariables,
+    databaseEntities
+} from './utils'
 import { DataSource } from 'typeorm'
 import { ChatFlow } from './entity/ChatFlow'
 import { ChatMessage } from './entity/ChatMessage'
 import { Tool } from './entity/Tool'
+import { Credential } from './entity/Credential'
 import logger from './utils/logger'
 
 export class ChildProcess {
@@ -109,6 +120,8 @@ export class ChildProcess {
                     return
                 }
 
+                if (incomingInput.overrideConfig)
+                    nodeToExecute.data = replaceInputsWithConfig(nodeToExecute.data, incomingInput.overrideConfig)
                 const reactFlowNodeData: INodeData = resolveVariables(nodeToExecute.data, reactFlowNodes, incomingInput.question)
                 nodeToExecuteData = reactFlowNodeData
 
@@ -126,7 +139,15 @@ export class ChildProcess {
             const nodeInstance = new nodeModule.nodeClass()
 
             logger.debug(`[server] [mode:child]: Running ${nodeToExecuteData.label} (${nodeToExecuteData.id})`)
-            const result = await nodeInstance.run(nodeToExecuteData, incomingInput.question, { chatHistory: incomingInput.history })
+
+            if (nodeToExecuteData.instance) checkMemorySessionId(nodeToExecuteData.instance, chatId)
+
+            const result = await nodeInstance.run(nodeToExecuteData, incomingInput.question, {
+                chatHistory: incomingInput.history,
+                appDataSource: childAppDataSource,
+                databaseEntities
+            })
+
             logger.debug(`[server] [mode:child]: Finished running ${nodeToExecuteData.label} (${nodeToExecuteData.id})`)
 
             await sendToParentProcess('finish', { result, addToChatFlowPool })
@@ -138,7 +159,7 @@ export class ChildProcess {
 }
 
 /**
- * Initalize DB in child process
+ * Initialize DB in child process
  * @returns {DataSource}
  */
 async function initDB() {
@@ -152,7 +173,7 @@ async function initDB() {
                 type: 'sqlite',
                 database: path.resolve(homePath, 'database.sqlite'),
                 synchronize,
-                entities: [ChatFlow, ChatMessage, Tool],
+                entities: [ChatFlow, ChatMessage, Tool, Credential],
                 migrations: []
             })
             break
@@ -166,7 +187,7 @@ async function initDB() {
                 database: process.env.DATABASE_NAME,
                 charset: 'utf8mb4',
                 synchronize,
-                entities: [ChatFlow, ChatMessage, Tool],
+                entities: [ChatFlow, ChatMessage, Tool, Credential],
                 migrations: []
             })
             break
@@ -179,7 +200,7 @@ async function initDB() {
                 password: process.env.DATABASE_PASSWORD,
                 database: process.env.DATABASE_NAME,
                 synchronize,
-                entities: [ChatFlow, ChatMessage, Tool],
+                entities: [ChatFlow, ChatMessage, Tool, Credential],
                 migrations: []
             })
             break
@@ -189,7 +210,7 @@ async function initDB() {
                 type: 'sqlite',
                 database: path.resolve(homePath, 'database.sqlite'),
                 synchronize,
-                entities: [ChatFlow, ChatMessage, Tool],
+                entities: [ChatFlow, ChatMessage, Tool, Credential],
                 migrations: []
             })
             break
